@@ -137,7 +137,7 @@ void loop() {
    *  1 = select - runner over the ine
    *  2 = left - start the event
    *  3 = up 
-   *  4 = down
+   *  4 = down - clear memory
    *  5 = right - dump the runners list
    */
 }
