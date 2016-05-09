@@ -70,13 +70,17 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
     }
 
-
+  // Initialise the display
+  lcd.begin(16, 2);
 
   // Set the local clock
   setfromrtc();    
 
-  // Initialise the display
-  lcd.begin(16, 2);
+  // Test the EEPROM
+  testeeprom();
+
+
+
 
   //button adc input
   pinMode( BUTTON_ADC_PIN, INPUT );         //ensure A0 is an input
@@ -131,6 +135,9 @@ void loop() {
     clearevent();
   }
 
+  if (button == 3) {
+      testeeprom();
+  }
 
 
   /* Button codes
@@ -236,8 +243,35 @@ void clearevent() {
   // Update the display
   lcd.setCursor (0 , 1); // Bottom left
   lcd.print("Token - ");
-  lcd.print(runners);
-  
+  lcd.print(runners); 
+}
+
+void testeeprom() {
+  // Write a byte to the very last slot in our memory
+  eep.update(((FLASHSIZE * 1024) - 1), 0x00);
+  delay(10);
+  eep.update(((FLASHSIZE * 1024) - 1), 69);
+  delay(10);
+  if (eep.read(((FLASHSIZE * 1024) - 1)) == 69) {
+    lcd.setCursor (0 , 0); // Top left
+    lcd.print("EEPROM TESTED OK");
+    delay(200);
+    lcd.setCursor (0 , 0); // Top left
+    lcd.print("                ");
+  }
+  else {
+    // EEPROM is knackered! We need to stop updating the screen
+    Timer1.detachInterrupt();
+    lcd.clear();
+    lcd.setCursor(0 , 0); // Top left
+    lcd.print("EEPROM FAILED!");
+    lcd.setCursor(0,   1); // Bottom left
+    lcd.print("CHECK RTC wires!");
+    
+    while(1) {
+      // Wait here forever
+    }
+  }
 }
 
 void zerortc() {
