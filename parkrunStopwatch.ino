@@ -19,7 +19,10 @@
  */
 
 // Version - to print on the display
-char prsversion[] = "0.1";
+char prsversion[] = "1.0a";
+
+// Debounce interval in ms
+#define DEBOUNCE 20
 
 /* The RTC and EEPROM have fixed addresses of 0x68 and 
     0x50 so define these in software */
@@ -55,14 +58,29 @@ HCRTC HCRTC;
 // Open the LCD
 LiquidCrystal lcd(8,9,4,5,6,7);
 
+
+ 
+
 // Initilaize using AT24CXX(i2c_address, size of eeprom in KB).
 AT24Cxx eep(i2c_address, FLASHSIZE);
 
 // Time for some global variables
 int runners = 0;
-
+int going = 1;
 
 void setup() {
+  // Turn on the backlight - connected to pin 3
+  pinMode(3, OUTPUT);
+  analogWrite(3, 50);
+
+  // Set our buttons as INPUT with the weak pullups
+  pinMode(10, INPUT); // runner button
+  pinMode(11, INPUT); // start
+  pinMode(12, INPUT); // clear
+  digitalWrite(10,HIGH);
+  digitalWrite(11,HIGH);
+  digitalWrite(12,HIGH);
+
   
   // initialize serial and wait for port to open:
   Serial.begin(115200);
@@ -89,8 +107,6 @@ void setup() {
   // Work out the current state
   runners = eep.read(0);
 
-  // Setup a 1 second timer interupt to update my LCD screen
-  Timer1.initialize(1000000);
 
   // Print a little startup splash screen
   lcd.setCursor( 0, 0 );   //top left
@@ -98,27 +114,106 @@ void setup() {
   lcd.setCursor( 0, 2 ); // Bottom Left
   lcd.print( "Version ");
   lcd.print(prsversion);
-  delay(1000);
+  delay(1500);
   lcd.clear();
 
+  // Print our battery voltage
+  lcd.setCursor (0,0);
+  lcd.print(" Battery : ");
+  lcd.print(map(analogRead(0),200,636,-20,100));
+  lcd.print("%");
+  lcd.setCursor (0,1);
+  lcd.print(analogRead(0));
+  lcd.print("/1024");
+  delay(2000);
+  lcd.clear();  
+
+   // Is somebody holding down the reset button?
+  if (!digitalRead(11)) {
+      // Yes, are they still holding it down 2 seconds later?
+      lcd.setCursor (0,0 );
+      lcd.print ("Delete race?");
+      lcd.setCursor (0,1);
+      lcd.print ("Hold button");
+      delay(2000);
+      if (!digitalRead(11)) {
+          // Yep, time to clear it
+          lcd.setCursor (0,0);
+          lcd.print ("Deleting race");
+          clearevent();   
+          delay(500);
+          lcd.clear();
+          lcd.setCursor(0,0);
+          lcd.print ("DELETED");
+          lcd.setCursor(0,1);
+          lcd.print ("Release button");
+          delay(5000);
+      }
+      lcd.clear();
+  }
+
+  // Is somebody holding down the 'send button' 
+    if (!digitalRead(12)) {
+      // Yes, are they still holding it down 2 seconds later?
+      lcd.setCursor (0,0 );
+      lcd.print ("Emergency dump?");
+      lcd.setCursor (0,1);
+      lcd.print ("Hold button");
+      delay(2000);
+      if (!digitalRead(12)) {
+          // Yep, time to clear it
+          lcd.setCursor (0,0);
+          lcd.print ("Emergency dump");
+          lcd.setCursor (0,1);
+          lcd.print ("Release button");
+          emergencydumpdata();   
+          delay(500);
+          lcd.clear();
+          lcd.setCursor(0,0);
+          lcd.print ("Dumped");
+          lcd.setCursor(0,1);
+          lcd.print ("Release button");
+          delay(5000);
+      }
+      lcd.clear();
+  }
+
+  // Setup a 1 second timer interupt to update my LCD screen
+  Timer1.initialize(1000000);
+
+
+
     // are we in an event?
-  if (runners != 0) {
+    // runners can be in one of three states
+    //
+    // 0 - no event in progress
+    // 0xFF - event in progress, nobody over the line
+    // Any other value - event in progress, nobody over the line
+    
+  if (runners >> 0) {
     Timer1.attachInterrupt(screenpaint); // execute once per second
   } else {
     lcd.setCursor (0 , 0); // Bottom left
     lcd.print("0:00:00 - Ready!");
   }
 
+  if (runners == 0xFF) {
+      // 0xFF is still in EEPROM, but we want to paint the display with zero runners over the line
+      runners = 0;
+  }
+  
+  // seems to need a delay for some reason
+  delay(50);
   lcd.setCursor (0 , 2 ); // Bottom left
   lcd.print("Token - ");
   lcd.print(runners);
 }
 
 void loop() {
-   
-  int button; 
-  button = readbutton();
-
+ /* Analogue Style!  
+ 
+ int button; 
+ button = readbutton();
   if (button == 1) {
       overline();
   }
@@ -131,14 +226,39 @@ void loop() {
     zerortc();
   }
 
-  if (button == 4) {
-    clearevent();
-  }
+ // if (button == 4) {
+ //   clearevent();
+ // }
 
   if (button == 3) {
       testeeprom();
   }
 
+ */ 
+ 
+  if (!digitalRead(10)) {
+    // Still that way a few ms later?
+    delay(DEBOUNCE);
+    if (!digitalRead(10)) {
+      overline();   
+    }
+  }
+
+  if (!digitalRead(11)) {
+    delay(DEBOUNCE);
+      if (!digitalRead(11)) {
+        zerortc();
+      }
+  }
+
+ if (!digitalRead(12)) {
+    delay(DEBOUNCE);
+      if (!digitalRead(12)) {
+        dumpdata();
+      }
+  }
+  
+}
 
   /* Button codes
    *  1 = select - runner over the ine
@@ -147,15 +267,17 @@ void loop() {
    *  4 = down - clear memory
    *  5 = right - dump the runners list
    */
-}
 
-int readbutton() {
+
+
+// Readbutton() for the analogue values from an LCD shield
+int readbutton() { 
   // Read the state of the button, figure out what it means
   int bval = analogRead(0);
   int cval;
 
   //10ms debounce
-  delay(10);
+  delay(DEBOUNCE);
   cval = analogRead(0);
   
   if (bval == cval) {
@@ -185,23 +307,46 @@ int readbutton() {
   }
 }
 
+
 void dumpdata() {
   int eepromin;
 
   lcd.setCursor(8,0);
   lcd.print("Snd:");
-  // Some test code - try dumping all of the data from our EEPROM
+
+  // Print a junsd style header
+  Serial.println("STARTOFEVENT,02/07/2001 00:00:00,junsd_stopwatch");
+  Serial.println("0,02/07/2001 00:00:00");
+
+  
+  // Dump items from this event
   for (int i = 1 ; i != (runners + 1) ; i++) {
     lcd.setCursor(12,0);
     lcd.print(i);
-    Serial.print("Runner\t");
+
+    //print FOUT "$place,$bogus $hour:$min:$sec,$hour:$min:$sec\n";
     Serial.print(i);
-    Serial.print("\t");
-    Serial.print(bcdToDec(eep.read(i * 3)));
+    Serial.print(",02/07/2001 ");
+   
+    printHour(bcdToDec(eep.read(i * 3)));
+    printDigits(bcdToDec(eep.read(i * 3 + 1)));
+    printDigits(bcdToDec(eep.read(i * 3 + 2)));
+
+    Serial.print(",");
+
+    // For some reason we repeat it
+    printHour(bcdToDec(eep.read(i * 3)));
     printDigits(bcdToDec(eep.read(i * 3 + 1)));
     printDigits(bcdToDec(eep.read(i * 3 + 2)));
     Serial.println();
   }
+
+  // Junsd style footer
+  Serial.print("ENDOFEVENT,02/07/2001 ");
+  printHour(bcdToDec(eep.read(runners * 3)));
+  printDigits(bcdToDec(eep.read(runners * 3 + 1)));
+  printDigits(bcdToDec(eep.read(runners * 3 + 2)));
+  Serial.println();
   lcd.setCursor(8,0);
   lcd.print("        ");
 }
@@ -215,19 +360,21 @@ void screenpaint() {
 
 void overline() {
   // A runner has crossed the line - good for them
-  runners++;
+  if (going) {
+    runners++;
+    
+    // Store their time!
+    eep.update((runners * 3), decToBcd(hour()));
+    eep.update((runners * 3 + 1), decToBcd(minute()));
+    eep.update((runners * 3 + 2), decToBcd(second()));
   
-  // Store their time! Code goes here!
-  eep.update((runners * 3), decToBcd(hour()));
-  eep.update((runners * 3 + 1), decToBcd(minute()));
-  eep.update((runners * 3 + 2), decToBcd(second()));
-
-  // Store the runner data
-  eep.update(0, runners); // Byte 0 is our magic 'runners' spot
-  
-  lcd.setCursor (0 , 1); // Bottom left
-  lcd.print("Token - ");
-  lcd.print(runners);
+    // Store the runner data
+    eep.update(0, runners); // Byte 0 is our magic 'runners' spot
+    
+    lcd.setCursor (0 , 1); // Bottom left
+    lcd.print("Token - ");
+    lcd.print(runners);
+  }
 }
 
 void clearevent() {
@@ -236,10 +383,13 @@ void clearevent() {
   lcd.clear();
   lcd.setCursor (0 , 0); // Bottom left
   lcd.print("0:00:00 - Ready!");
- 
+
+  // This will disable any 'overline' buttons
+  going = 0;
+  
   //  Set number of runners to zero
   runners = 0;
-  eep.update(0, runners); // Byte 0 is our magic 'runners' spot
+  eep.update(0, runners); // Byte zero is our special 'runners' quantity value
   // Update the display
   lcd.setCursor (0 , 1); // Bottom left
   lcd.print("Token - ");
@@ -282,6 +432,9 @@ void zerortc() {
     lcd.clear();
     HCRTC.RTCWrite(I2CDS1307Add, 70, 1, 1, 0, 0, 0, 4);
     setfromrtc();
+    going = 1;
+    eep.update(0, 0xFF); // Put a magic value here - this way we know an event is in progress
+    
     lcd.setCursor (0 , 1); // Bottom left
     lcd.print("Token -        ");
     // Paint the screen once per second
@@ -360,6 +513,13 @@ void printDigits(int digits){
   Serial.print(digits);
 }
 
+void printHour(int digits){
+  // utility function for digital clock display: prints preceding colon and leading 0
+  if(digits < 10)
+    Serial.print('0');
+  Serial.print(digits);
+}
+
 void lcdDigits(int digits){
   // utility function for digital clock display: prints preceding colon and leading 0
   lcd.print(":");
@@ -369,27 +529,34 @@ void lcdDigits(int digits){
 }
 void setfromrtc() {
   // Read data in from the RTC
-  Serial.println("Reading RTC");
-  HCRTC.RTCRead(I2CDS1307Add);
-  Serial.print("RTC date is ");
-  Serial.print(HCRTC.GetDateString());
-  Serial.print("RTC time is ");
-  Serial.println(HCRTC.GetTimeString());
+  
+  HCRTC.RTCRead(I2CDS1307Add);;
   // Update Arduino's clock for the same
    // Format is setTime(hr,min,sec,day,month,yr);
   setTime(HCRTC.GetHour(),HCRTC.GetMinute(),HCRTC.GetSecond(),HCRTC.GetDay(),HCRTC.GetMonth(),HCRTC.GetYear());
-  Serial.print("Set time on arduino to ");
-    Serial.print(hour());
-  printDigits(minute());
-  printDigits(second());
-  Serial.print(" ");
-  Serial.print(day());
-  Serial.print(" ");
-  Serial.print(month());
-  Serial.print(" ");
-  Serial.print(year()); 
-  Serial.println(); 
 }
 
+// Emergency - dump all data, just in case someone deleted the event by accident
+void emergencydumpdata() {
+  int eepromin;
 
+  lcd.setCursor(8,0);
+  lcd.print("Snd:");
+  // Dump everything from the eeprom
+  Serial.println("EMERGENCY - DUMPING ALL EEPROM DATA!");  
+  Serial.println();
+  for (int i = 0 ; i < eep.length() ; i++) {
+    lcd.setCursor(12,0);
+    lcd.print(i);
+    Serial.print("Runner\t");
+    Serial.print(i);
+    Serial.print("\t");
+    Serial.print(bcdToDec(eep.read(i * 3)));
+    printDigits(bcdToDec(eep.read(i * 3 + 1)));
+    printDigits(bcdToDec(eep.read(i * 3 + 2)));
+    Serial.println();
+  }
+  lcd.setCursor(8,0);
+  lcd.print("        ");
+}
 
